@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import *
 from PyQt6.QtGui import QFont
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal, pyqtSlot, QObject, QSize, QItemSelection
 
+import pyqtgraph as pg
 from pyqtgraph.dockarea import Dock, DockArea
 
 from camera import USB_Camera, Camera_Search
@@ -15,7 +16,7 @@ from util import *
 
 
 class Viewer(QMainWindow):
-    save_opts = pyqtSignal(str, bool,bool,bool,float,float)
+    save_opts = pyqtSignal(str)
     logging_sig = pyqtSignal(str)
     closing_sig = pyqtSignal()
 
@@ -32,7 +33,7 @@ class Viewer(QMainWindow):
         parser = argparse.ArgumentParser(description="Utility for acquiring data from ICI Thermal Cameras on a timed interval.")
         parser.add_argument("-s", "--start", action="store_true", help="Start acquisition")
         parser.add_argument("-o", "--output_path", type=str, default="./data", help="Path to store acquired data")
-        parser.add_argument("-i", "--interval", type=float, default=1.0, help="Acquisition interval")
+        parser.add_argument("-i", "--framerate", type=float, default=60, help="Framerate")
         parser.add_argument("-b", "--binary", action="store_true", help="Save binary files")
         parser.add_argument("-j", "--jpg", action="store_true", help="Save JPG files")
         parser.add_argument("-t", "--tiff", action="store_true", help="Save TIFF files")
@@ -80,20 +81,15 @@ class Viewer(QMainWindow):
 
         #Acqusition timer
         self.acq_timer = QTimer()
-        self.acq_timer.setInterval(int(self.ui_interval.value() * 1000))
+        self.acq_timer.setInterval(int(self.ui_framerate.value() * 1000))
         self.acq_timer.timeout.connect(QApplication.processEvents)
-        self.ui_interval.valueChanged.connect(lambda new_val : self.acq_timer.setInterval(int(new_val * 1000)))
+        self.ui_framerate.valueChanged.connect(lambda new_val : self.acq_timer.setInterval(int(new_val * 1000)))
 
         #Callbacks
         self.btn_search_for_cams.clicked.connect(self.searchForCams)
         self.btn_shutdown_all.clicked.connect(self.camShutdownAll)
-        self.btn_start_selected.clicked.connect(self.camStart)
-        self.btn_stop_selected.clicked.connect(self.camStop)
 
         self.btn_acq_startstop.clicked.connect(self.acqStartStop)
-        self.cb_save_binary.clicked.connect(self.updateSaveConfig)
-        self.cb_save_jpg.clicked.connect(self.updateSaveConfig)
-        self.cb_save_tiff.clicked.connect(self.updateSaveConfig)
         self.btn_browse.clicked.connect(self.selectDataFolder)
 
         #Finally, init cams
@@ -123,7 +119,7 @@ class Viewer(QMainWindow):
         #Camera Table
         self.camera_table = QTableWidget(self.groupBox_cameras)
         self.camera_table.setObjectName(u"camera_table")
-        self.camera_table.setFixedSize(251,100)
+        self.camera_table.setFixedSize(251,200)
         self.camera_table.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.camera_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.camera_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -133,12 +129,11 @@ class Viewer(QMainWindow):
         self.camera_table.selectionModel().selectionChanged.connect(self.cameraSelChanged)
 
         item0 = QTableWidgetItem()
-        item0.setText("Type") 
+        item0.setText("Enabled") 
         self.camera_table.setHorizontalHeaderItem(0, item0)
-        self.camera_table.setColumnWidth(0, 65)
 
         item1 = QTableWidgetItem()
-        item1.setText("Serial #") 
+        item1.setText("Type") 
         self.camera_table.setHorizontalHeaderItem(1, item1)
 
         item2 = QTableWidgetItem()
@@ -174,56 +169,56 @@ class Viewer(QMainWindow):
         self.layout_cameras.addWidget(self.camera_buttons)
         self.verticalLayout.addWidget(self.groupBox_cameras)
 
-        #Selected Camera Buttons
-        self.gb_sel_cameras = QGroupBox(self.config_widget)
-        self.gb_sel_cameras.setObjectName(u"gb_sel_cameras")
-        self.gb_sel_cameras.setTitle("Selected Camera")
-        self.gb_sel_cameras.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.gb_sel_cameras.setEnabled(False)
+        # #Selected Camera Buttons
+        # self.gb_sel_cameras = QGroupBox(self.config_widget)
+        # self.gb_sel_cameras.setObjectName(u"gb_sel_cameras")
+        # self.gb_sel_cameras.setTitle("Selected Camera")
+        # self.gb_sel_cameras.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        # self.gb_sel_cameras.setEnabled(False)
 
-        self.sel_camera_btn_layout = QGridLayout(self.gb_sel_cameras)
+        # self.sel_camera_btn_layout = QGridLayout(self.gb_sel_cameras)
 
-        self.btn_stop_selected = QPushButton(self.gb_sel_cameras)
-        self.btn_stop_selected.setObjectName(u"btn_stop_selected")
-        self.btn_stop_selected.setText("Stop Selected")
-        self.btn_stop_selected.setFixedSize(QSize(111,24))
-        self.sel_camera_btn_layout.addWidget(self.btn_stop_selected, 1, 1, Qt.AlignmentFlag.AlignCenter)
+        # self.btn_stop_selected = QPushButton(self.gb_sel_cameras)
+        # self.btn_stop_selected.setObjectName(u"btn_stop_selected")
+        # self.btn_stop_selected.setText("Stop Selected")
+        # self.btn_stop_selected.setFixedSize(QSize(111,24))
+        # self.sel_camera_btn_layout.addWidget(self.btn_stop_selected, 1, 1, Qt.AlignmentFlag.AlignCenter)
 
-        self.btn_start_selected = QPushButton(self.gb_sel_cameras)
-        self.btn_start_selected.setObjectName(u"btn_start_selected")
-        self.btn_start_selected.setText("Start Selected")
-        self.btn_start_selected.setFixedSize(QSize(111,24))
-        self.sel_camera_btn_layout.addWidget(self.btn_start_selected, 1, 0, Qt.AlignmentFlag.AlignCenter)
+        # self.btn_start_selected = QPushButton(self.gb_sel_cameras)
+        # self.btn_start_selected.setObjectName(u"btn_start_selected")
+        # self.btn_start_selected.setText("Start Selected")
+        # self.btn_start_selected.setFixedSize(QSize(111,24))
+        # self.sel_camera_btn_layout.addWidget(self.btn_start_selected, 1, 0, Qt.AlignmentFlag.AlignCenter)
 
-        self.cb_enable_nuc = QCheckBox(self.gb_sel_cameras)
-        self.cb_enable_nuc.setObjectName(u"cb_enable_nuc")
-        self.cb_enable_nuc.setText("Enable Auto-NUC")
-        self.cb_enable_nuc.setChecked(True)
-        self.sel_camera_btn_layout.addWidget(self.cb_enable_nuc, 2, 0, Qt.AlignmentFlag.AlignCenter)
+        # self.cb_enable_nuc = QCheckBox(self.gb_sel_cameras)
+        # self.cb_enable_nuc.setObjectName(u"cb_enable_nuc")
+        # self.cb_enable_nuc.setText("Enable Auto-NUC")
+        # self.cb_enable_nuc.setChecked(True)
+        # self.sel_camera_btn_layout.addWidget(self.cb_enable_nuc, 2, 0, Qt.AlignmentFlag.AlignCenter)
 
-        self.btn_nuc = QPushButton(self.gb_sel_cameras)
-        self.btn_nuc.setObjectName(u"btn_nuc")
-        self.btn_nuc.setText("Run NUC Now")
-        self.btn_nuc.setFixedSize(QSize(111,24))
-        self.sel_camera_btn_layout.addWidget(self.btn_nuc, 3, 0, Qt.AlignmentFlag.AlignCenter)
+        # self.btn_nuc = QPushButton(self.gb_sel_cameras)
+        # self.btn_nuc.setObjectName(u"btn_nuc")
+        # self.btn_nuc.setText("Run NUC Now")
+        # self.btn_nuc.setFixedSize(QSize(111,24))
+        # self.sel_camera_btn_layout.addWidget(self.btn_nuc, 3, 0, Qt.AlignmentFlag.AlignCenter)
 
-        self.rb_high_gain = QRadioButton("High Gain")
-        self.rb_high_gain.setObjectName(u"rb_high_gain")
-        self.rb_high_gain.setChecked(False)
-        self.sel_camera_btn_layout.addWidget(self.rb_high_gain, 2, 1, Qt.AlignmentFlag.AlignCenter)
+        # self.rb_high_gain = QRadioButton("High Gain")
+        # self.rb_high_gain.setObjectName(u"rb_high_gain")
+        # self.rb_high_gain.setChecked(False)
+        # self.sel_camera_btn_layout.addWidget(self.rb_high_gain, 2, 1, Qt.AlignmentFlag.AlignCenter)
 
-        self.rb_low_gain = QRadioButton("Low Gain")
-        self.rb_low_gain.setObjectName(u"rb_low_gain")
-        self.rb_low_gain.setChecked(True)
-        self.sel_camera_btn_layout.addWidget(self.rb_low_gain, 3, 1, Qt.AlignmentFlag.AlignCenter)
+        # self.rb_low_gain = QRadioButton("Low Gain")
+        # self.rb_low_gain.setObjectName(u"rb_low_gain")
+        # self.rb_low_gain.setChecked(True)
+        # self.sel_camera_btn_layout.addWidget(self.rb_low_gain, 3, 1, Qt.AlignmentFlag.AlignCenter)
 
-        self.rbg_gain = QButtonGroup()
-        self.sel_camera_btn_layout.addWidget(self.rb_low_gain, 3, 1, Qt.AlignmentFlag.AlignCenter)
-        self.rbg_gain = QButtonGroup()
-        self.rbg_gain.addButton(self.rb_high_gain)
-        self.rbg_gain.addButton(self.rb_low_gain)
+        # self.rbg_gain = QButtonGroup()
+        # self.sel_camera_btn_layout.addWidget(self.rb_low_gain, 3, 1, Qt.AlignmentFlag.AlignCenter)
+        # self.rbg_gain = QButtonGroup()
+        # self.rbg_gain.addButton(self.rb_high_gain)
+        # self.rbg_gain.addButton(self.rb_low_gain)
 
-        self.verticalLayout.addWidget(self.gb_sel_cameras)
+        # self.verticalLayout.addWidget(self.gb_sel_cameras)
 
         #Acqusition
         self.groupBox_acquisition = QGroupBox(self.config_widget)
@@ -239,65 +234,25 @@ class Viewer(QMainWindow):
         self.btn_acq_startstop.setText("Start")
         self.acq_layout.addWidget(self.btn_acq_startstop, 0, 0, Qt.AlignmentFlag.AlignLeft)
 
-        self.label_interval = QLabel(self.groupBox_acquisition)
-        self.label_interval.setObjectName(u"label_interval")
-        self.label_interval.setText("Interval (s):") 
-        self.acq_layout.addWidget(self.label_interval, 0, 1, Qt.AlignmentFlag.AlignRight)
+        self.label_framerate = QLabel(self.groupBox_acquisition)
+        self.label_framerate.setObjectName(u"label_framerate")
+        self.label_framerate.setText("Frame Rate:") 
+        self.acq_layout.addWidget(self.label_framerate, 0, 1, Qt.AlignmentFlag.AlignRight)
 
-        self.ui_interval = QDoubleSpinBox(self.groupBox_acquisition)
-        self.ui_interval.setObjectName(u"ui_interval")
-        self.ui_interval.setValue(self.args.interval)
-        self.acq_layout.addWidget(self.ui_interval, 0, 2, Qt.AlignmentFlag.AlignLeft)
+        self.ui_framerate = QDoubleSpinBox(self.groupBox_acquisition)
+        self.ui_framerate.setObjectName(u"ui_interval")
+        self.ui_framerate.setValue(self.args.framerate)
+        self.acq_layout.addWidget(self.ui_framerate, 0, 2, Qt.AlignmentFlag.AlignLeft)
 
         #Save Options
-        self.cb_save_binary = QCheckBox(self.groupBox_acquisition)
-        self.cb_save_binary.setObjectName(u"cb_save_binary")
-        self.cb_save_binary.setText("Save Binary") 
-        self.cb_save_binary.setChecked(self.args.binary)
-        self.cb_save_jpg = QCheckBox(self.groupBox_acquisition)
-        self.cb_save_jpg.setObjectName(u"cb_save_jpg")
-        self.cb_save_jpg.setText("Save JPG")
-        self.cb_save_jpg.setChecked(self.args.jpg)
-        self.cb_save_tiff = QCheckBox(self.groupBox_acquisition)
-        self.cb_save_tiff.setObjectName(u"cb_save_tiff")
-        self.cb_save_tiff.setText("Save TIFF")
-        self.cb_save_tiff.setChecked(self.args.tiff)
+        self.btn_save_png = QPushButton(self.groupBox_acquisition)
+        self.btn_save_png.setObjectName(u"cb_save_binary")
+        self.btn_save_png.setFixedSize(QSize(111,24))
+        self.btn_save_png.setText("Save Snapshot") 
 
         self.save_cb_layout = QVBoxLayout()
-        self.save_cb_layout.addWidget(self.cb_save_binary)
-        self.save_cb_layout.addWidget(self.cb_save_jpg)
-        self.save_cb_layout.addWidget(self.cb_save_tiff)
+        self.save_cb_layout.addWidget(self.btn_save_png)
         self.acq_layout.addLayout(self.save_cb_layout, 1, 0, Qt.AlignmentFlag.AlignLeft)
-
-        #JPG Scale
-        self.groupBox_jpg_scale = QGroupBox(self.groupBox_acquisition)
-        self.groupBox_jpg_scale.setObjectName(u"groupBox_jpg_scale")
-        self.groupBox_jpg_scale.setTitle("JPG Scale (°C)") 
-
-        self.save_opts_gb_layout = QGridLayout(self.groupBox_jpg_scale)
-        self.save_opts_gb_layout.setObjectName(u"save_opts_gb_layout")
-
-        self.ui_jpg_min = QDoubleSpinBox(self.groupBox_jpg_scale)
-        self.ui_jpg_min.setObjectName(u"ui_jpg_min")
-        self.ui_jpg_min.setValue(self.args.min_value)
-        self.save_opts_gb_layout.addWidget(self.ui_jpg_min, 0, 1)
-
-        self.label_jpg_min = QLabel(self.groupBox_jpg_scale)
-        self.label_jpg_min.setObjectName(u"label_jpg_min")
-        self.label_jpg_min.setText("Min:") 
-        self.save_opts_gb_layout.addWidget(self.label_jpg_min, 0,0)
-
-        self.ui_jpg_max = QDoubleSpinBox(self.groupBox_jpg_scale)
-        self.ui_jpg_max.setObjectName(u"ui_jpg_max")
-        self.ui_jpg_max.setValue(self.args.max_value)
-        self.save_opts_gb_layout.addWidget(self.ui_jpg_max, 1, 1)
-
-        self.label_jpg_max = QLabel(self.groupBox_jpg_scale)
-        self.label_jpg_max.setObjectName(u"label_jpg_max")
-        self.label_jpg_max.setText("Max:") 
-        self.save_opts_gb_layout.addWidget(self.label_jpg_max, 1, 0)
-
-        self.acq_layout.addWidget(self.groupBox_jpg_scale, 1, 1, 1, 2, Qt.AlignmentFlag.AlignCenter)
 
         #Data Path
         self.ui_datapath = QLineEdit(self.groupBox_acquisition)
@@ -343,91 +298,100 @@ class Viewer(QMainWindow):
             self.cam_search.q_thread.start()
             self.cam_search.deleteLater()
 
+    def createImageView(self):
+        imv = pg.ImageView()
+        imv.setPredefinedGradient('turbo') #'CET-R4')
+        return imv
+
     @pyqtSlot(list)
     def initCams(self, cam_list):
-        cam_types = {-1:"Unknown", 0:"9000 Series", 1:"8000 Series", 2:"SWIR Series"}
         self.searching = False
         for idx, cam in enumerate(cam_list):
-            cam_str = f"#{cam}"
-            logging.info(f"Starting camera {cam_str}...")
-            active_cam = USB_Camera(camera_index=cam, save_path=self.ui_datapath.text())
+            self.active_cams[idx] = {"name": cam}
 
-            if active_cam:
-                self.running_threads.watchThread(active_cam.q_thread)
-                self.active_cams[idx] = {"cam": active_cam}
+            #Update UI
+            if self.camera_table.rowCount() < len(self.active_cams) + 1:
+                self.camera_table.insertRow(idx)
 
-                #active_cam.thread.finished.connect(lambda: self.removeCam(idx))
-                active_cam.finished_sig.connect(self.removeCam)
-                active_cam.ready_sig.connect(self.initCamsUI)
-                active_cam.status_sig.connect(self.updateCamStatus)
-                active_cam.stats_sig.connect(self.updateStats)
+            cam_cb_widget = QWidget()
+            cam_cb_layout = QHBoxLayout(cam_cb_widget)
+            cam_cb = QCheckBox()
+            cam_cb.setText(str(idx))
+            cam_cb_layout.addWidget(cam_cb)
+            cam_cb_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            cam_cb_layout.setContentsMargins(0,0,0,0)
+            self.camera_table.setCellWidget(idx, 0, cam_cb_widget)
+            cam_cb.checkStateChanged.connect(self.camStartStop)
 
-                self.acq_timer.timeout.connect(active_cam.getImage)
-                self.save_opts.connect(active_cam.setSaveOpts)
-                self.updateSaveConfig()
-                self.closing_sig.connect(active_cam.shutdown)
+            cam_serial_widget = QTableWidgetItem(f"#{cam}")  #Used as reference for removal
+            self.active_cams[idx]["table_widget"] = cam_serial_widget
+            self.camera_table.setItem(idx, 1, cam_serial_widget)
+            self.camera_table.setItem(idx, 2, QTableWidgetItem("Standby"))
 
-                start_sig = Sig("start")
-                start_sig.connect(active_cam.init)
-                stop_sig = Sig("stop")
-                stop_sig.connect(active_cam.stop)
-                shutdown_sig = Sig("shutdown")
-                shutdown_sig.connect(active_cam.shutdown)
+    
+    def initCam(self, idx, cam):
+        cam_str = f"#{cam}"
+        logging.info(f"Starting camera {cam_str}...")
+        active_cam = USB_Camera(camera_index=idx, save_path=self.ui_datapath.text())
+        if active_cam:
+            self.running_threads.watchThread(active_cam.q_thread)
+            active_cam.q_thread.start()
+            self.active_cams[idx].update({"cam": active_cam})
+            
+            #active_cam.thread.finished.connect(lambda: self.removeCam(idx))
+            active_cam.finished_sig.connect(self.removeCam)
+            active_cam.ready_sig.connect(self.initCamsUI)
+            active_cam.status_sig.connect(self.updateCamStatus)
+            active_cam.stats_sig.connect(self.updateStats)
+            active_cam.update_image_sig.connect(self.updateImage)
 
-                # enable_nuc_sig = Sig("enable_nuc")
-                # enable_nuc_sig.connect(active_cam.enableAutoNuc)
-                # disable_nuc_sig = Sig("disable_nuc")
-                # disable_nuc_sig.connect(active_cam.disableAutoNuc)
-                # nuc_now_sig = Sig("nuc_now")
-                # nuc_now_sig.connect(active_cam.cameraNuc)
-                # high_gain_sig = Sig("high_gain")
-                # high_gain_sig.connect(active_cam.switchCameraToHighGain)
-                # low_gain_sig = Sig("low_gain")
-                # low_gain_sig.connect(active_cam.switchCameraToLowGain)
+            self.acq_timer.timeout.connect(active_cam.getImage)
+            self.save_opts.connect(active_cam.setSaveOpts)
+            self.updateSaveConfig()
+            self.closing_sig.connect(active_cam.shutdown)
 
-                self.active_cams[idx].update({"start_sig": start_sig, "stop_sig": stop_sig, "shutdown_sig": shutdown_sig})
-                # ,
-                #                               "enable_nuc": enable_nuc_sig, "disable_nuc": disable_nuc_sig, "nuc_now": nuc_now_sig,
-                #                               "high_gain": high_gain_sig, "low_gain": low_gain_sig})
+            start_sig = Sig("start")
+            start_sig.connect(active_cam.init)
+            stop_sig = Sig("stop")
+            stop_sig.connect(active_cam.stop)
+            shutdown_sig = Sig("shutdown")
+            shutdown_sig.connect(active_cam.shutdown)
 
-                #Update UI
-                if self.camera_table.rowCount() < len(self.active_cams) + 1:
-                    self.camera_table.insertRow(idx)
-                self.camera_table.setItem(idx, 0, QTableWidgetItem(f"{cam}"))
-                self.camera_table.setItem(idx, 1, QTableWidgetItem(f"#{cam}"))
-                self.camera_table.setItem(idx, 2, QTableWidgetItem("Starting"))
+            # enable_nuc_sig = Sig("enable_nuc")
+            # enable_nuc_sig.connect(active_cam.enableAutoNuc)
+            # disable_nuc_sig = Sig("disable_nuc")
+            # disable_nuc_sig.connect(active_cam.disableAutoNuc)
+            # nuc_now_sig = Sig("nuc_now")
+            # nuc_now_sig.connect(active_cam.cameraNuc)
+            # high_gain_sig = Sig("high_gain")
+            # high_gain_sig.connect(active_cam.switchCameraToHighGain)
+            # low_gain_sig = Sig("low_gain")
+            # low_gain_sig.connect(active_cam.switchCameraToLowGain)
 
-                try:
-                    self.dock_cam_placeholder.close()
-                except Exception:
-                    pass
-                cam_dock = Dock(cam_str, size=(800,800))
-                if idx == 0:
-                    self.dock_area.addDock(cam_dock, 'top', self.dock_console)
-                elif idx == 1:
-                    self.dock_area.addDock(cam_dock, 'right', self.active_cams[0]["dock"])
-                elif idx == 2:
-                    self.dock_area.addDock(cam_dock, 'bottom', self.active_cams[0]["dock"])
-                elif idx == 3:
-                    self.dock_area.addDock(cam_dock, 'bottom', self.active_cams[1]["dock"])
-                #Max 4 right now
-                self.active_cams[idx].update({"dock": cam_dock})
+            self.active_cams[idx].update({"start_sig": start_sig, "stop_sig": stop_sig, "shutdown_sig": shutdown_sig})
+            # ,
+            #                               "enable_nuc": enable_nuc_sig, "disable_nuc": disable_nuc_sig, "nuc_now": nuc_now_sig,
+            #                               "high_gain": high_gain_sig, "low_gain": low_gain_sig})
 
-                active_cam.q_thread.start()
+            self.active_cams[idx]["start_sig"].emit(0)
 
-    @pyqtSlot(int)
-    def initCamsUI(self, cam_idx):
+
+    @pyqtSlot(int, bool)
+    def initCamsUI(self, cam_idx, ready):
         try:
-            if not "ui_ready" in self.active_cams[cam_idx]:
+            if not ready:
+                logging.info(f"Could not start {cam_idx}, removing.")
+                self.removeCam(cam_idx)
+
+            elif not "ui_ready" in self.active_cams[cam_idx]:
                 try:                
                     active_cam : USB_Camera = self.active_cams[cam_idx]["cam"]
                     cam_str_ser = f"{active_cam.getTypeString()} #{active_cam.serial}"
 
-                    self.camera_table.setItem(cam_idx, 0, QTableWidgetItem(active_cam.getTypeString()))
-                    cam_serial_widget = QTableWidgetItem(str(active_cam.serial))  #Used as reference for removal
+                    cam_serial_widget = QTableWidgetItem(cam_str_ser)  #Used as reference for removal
+                    self.active_cams[cam_idx]["table_widget"] = cam_serial_widget
                     self.camera_table.setItem(cam_idx, 1, cam_serial_widget)
                     self.camera_table.setItem(cam_idx, 3, QTableWidgetItem(f"{active_cam.width}x{active_cam.height}"))
-                    self.active_cams[cam_idx].update({"table_widget": cam_serial_widget})
 
                     stats_root = QTreeWidgetItem([cam_str_ser,""])
                     self.active_cams[cam_idx]["stats_root"] = stats_root
@@ -436,9 +400,27 @@ class Viewer(QMainWindow):
                     stats = {x: QTreeWidgetItem(stats_root, [x, ""]) for x in ("Minimum","Maximum","Mean","Median","Frame Rate")}
                     self.active_cams[cam_idx]["stats"] = stats
 
-                    cam_dock = self.active_cams[cam_idx]["dock"]
+                    imv = self.createImageView()
+                    self.active_cams[cam_idx]["imv"] = imv
+
+                    try:
+                        self.dock_cam_placeholder.close()
+                    except Exception:
+                        pass
+                    cam_dock = Dock(cam_str_ser, size=(800,800))
+                    dock_count = self.getDockCount()
+                    if dock_count == 0:
+                        self.dock_area.addDock(cam_dock, 'top', self.dock_console)
+                    elif dock_count == 1:
+                        self.dock_area.addDock(cam_dock, 'right', self.active_cams[0]["dock"])
+                    elif dock_count == 2:
+                        self.dock_area.addDock(cam_dock, 'bottom', self.active_cams[0]["dock"])
+                    elif dock_count == 3:
+                        self.dock_area.addDock(cam_dock, 'bottom', self.active_cams[1]["dock"])
+                    #Max 4 right now
                     cam_dock.setTitle(cam_str_ser)
-                    cam_dock.addWidget(active_cam.imv)
+                    cam_dock.addWidget(self.active_cams[cam_idx]["imv"])
+                    self.active_cams[cam_idx].update({"dock": cam_dock})
 
                     self.active_cams[cam_idx]["ui_ready"] = True
 
@@ -449,7 +431,7 @@ class Viewer(QMainWindow):
             else:
                 logging.info(f"Cam {cam_idx} already exists, not re-inited.")
         except KeyError as e:
-            logging.warning(f"Error with cam init: {str(e)}")
+            logging.warning(f"Error with cam init: {type(e)} {str(e)}")
 
     @pyqtSlot()
     def camShutdownAll(self):
@@ -471,6 +453,22 @@ class Viewer(QMainWindow):
             self.active_cams[idx]["start_sig"].emit(0)   #start signal
         except IndexError:
             pass
+
+    def camStartStop(self, state):
+        if state == QtCore.Qt.CheckState.Checked:
+            try:
+                idx = int(self.sender().text())
+                cam = self.active_cams[idx]["name"]
+                self.initCam(idx, cam)
+            except IndexError:
+                pass
+        else:
+            try:
+                idx = int(self.sender().text())
+                self.active_cams[idx]["shutdown_sig"].emit(0)   #start signal
+            except IndexError:
+                pass
+
 
     @pyqtSlot()
     def enableAutoNUC(self):
@@ -537,13 +535,7 @@ class Viewer(QMainWindow):
 
     @pyqtSlot()
     def updateSaveConfig(self):
-        opts = (self.ui_datapath.text(),
-                self.cb_save_binary.isChecked(),
-                self.cb_save_jpg.isChecked(),
-                self.cb_save_tiff.isChecked(),
-                self.ui_jpg_min.value(),
-                self.ui_jpg_max.value())
-        self.save_opts.emit(*opts)
+        self.save_opts.emit(self.ui_datapath.text())
 
     def selectDataFolder(self):
         folder_path = QFileDialog.getExistingDirectory(self, "Select Data Directory",
@@ -563,21 +555,40 @@ class Viewer(QMainWindow):
             i : QTreeWidgetItem = self.active_cams[cam_idx]["stats"][k] 
             i.setText(1, f"{x:.2f}")
 
+    def updateImage(self, cam_idx : int, img):
+        imv :pg.ImageView = self.active_cams[cam_idx]["imv"]
+        imv.setImage(img, autoHistogramRange=True, autoLevels=True, autoRange=True, levelMode='mono')
+
     @pyqtSlot(int)
     def removeCam(self, idx):
         logging.debug(f"Removing cam {idx}")
         try:
-            table_row = self.camera_table.row(self.active_cams[idx]["table_widget"])
-            self.camera_table.removeRow(table_row)
+            # try:
+            #     table_row = self.camera_table.row(self.active_cams[idx]["table_widget"])
+            #     self.camera_table.removeRow(table_row)
+            # except KeyError:
+            #     pass
+            try:
+                self.stats_tree.takeTopLevelItem(self.stats_tree.indexOfTopLevelItem(self.active_cams[idx]["stats_root"]))
+            except KeyError:
+                pass
+            try:
+                self.active_cams[idx]["dock"].close()
+                del self.active_cams[idx]["dock"]
+            except KeyError:
+                pass
+            try:
+                del self.active_cams[idx]["ui_ready"]
+            except KeyError:
+                pass
 
-            self.stats_tree.takeTopLevelItem(self.stats_tree.indexOfTopLevelItem(self.active_cams[idx]["stats_root"]))
-            
-            self.active_cams[idx]["dock"].close()
-            self.active_cams.pop(idx)
-            if len(self.active_cams) == 0:
+            if self.getDockCount() == 0:
                 self.dock_area.addDock(self.dock_cam_placeholder, 'top', self.dock_console)
         except Exception as e:
             logging.warning(f"Error removing cam {idx}: {str(e)}")
+
+    def getDockCount(self):
+        return sum(["dock" in x for x in self.active_cams.values()])
 
     def closeEvent(self, a0):
         event = a0
