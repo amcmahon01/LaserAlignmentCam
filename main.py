@@ -369,7 +369,6 @@ class Viewer(QMainWindow):
             active_cam.stats_sig.connect(self.updateStats)
             active_cam.update_image_sig.connect(self.updateImage)
 
-            #self.acq_timer.timeout.connect(active_cam.getImage)
             self.save_opts.connect(active_cam.setSaveOpts)
             #self.updateSaveConfig()
             self.closing_sig.connect(active_cam.shutdown)
@@ -421,8 +420,9 @@ class Viewer(QMainWindow):
                     self.active_cams[cam_idx]["stats_root"] = stats_root
                     self.stats_tree.addTopLevelItem(stats_root)
                     stats_root.setExpanded(True)
-                    stats = {x: QTreeWidgetItem(stats_root, [x, ""]) for x in ("Minimum","Maximum","Mean","Median","Frame Rate")}
-                    self.active_cams[cam_idx]["stats"] = stats
+                    #stats = {x: QTreeWidgetItem(stats_root, [x, ""]) for x in ("Minimum","Maximum","Mean","Median","Frame Rate")}
+                    #Create dynamically instead in updateStats
+                    self.active_cams[cam_idx]["stats"] = {}
 
                     imv = self.createImageView(active_cam.img)
                     self.active_cams[cam_idx]["imv"] = imv
@@ -579,13 +579,29 @@ class Viewer(QMainWindow):
             try:
                 i : QTreeWidgetItem = self.active_cams[cam_idx]["stats"][k] 
             except KeyError:
-                self.active_cams[cam_idx]["stats"][k] = QTreeWidgetItem(self.active_cams[cam_idx]["stats_root"])
-                i : QTreeWidgetItem = self.active_cams[cam_idx]["stats"][k] 
-            i.setText(1, f"{x:.2f}")
+                self.active_cams[cam_idx]["stats"][k] = QTreeWidgetItem(self.active_cams[cam_idx]["stats_root"], [k, ""])
+                i : QTreeWidgetItem = self.active_cams[cam_idx]["stats"][k]
+            if type(x) is dict:
+                for k_x, y in x.items():
+                    try:
+                        j : QTreeWidgetItem = self.active_cams[cam_idx]["stats"][k + "_" + k_x]
+                    except KeyError:
+                        self.active_cams[cam_idx]["stats"][k + "_" + k_x] = QTreeWidgetItem(i, [k_x, ""])
+                        j : QTreeWidgetItem = self.active_cams[cam_idx]["stats"][k + "_" + k_x]
+                        i.setExpanded(True)         
+                    if type(y) is str:
+                        j.setText(1, y)
+                    else:
+                        j.setText(1, f"{y:.2f}")
+            else:     
+                if type(x) is str:
+                    i.setText(1, x)
+                else:
+                    i.setText(1, f"{x:.2f}")
 
     def updateImage(self, cam_idx : int):
         imv :pg.ImageView = self.active_cams[cam_idx]["imv"]
-        imv.updateImage()
+        #imv.updateImage()
         imv.setImage(imv.image, autoHistogramRange=self.cb_auto_hist.isChecked(), autoLevels=self.cb_auto_levels.isChecked(), autoRange=self.cb_auto_range.isChecked(), levelMode='mono')
 
     @pyqtSlot(int)

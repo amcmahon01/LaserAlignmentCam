@@ -13,11 +13,7 @@ from lmfit.lineshapes import gaussian2d
 from scipy.stats import skew
 import debugpy
 
-import matplotlib
-matplotlib.use('Agg')
-from matplotlib import pyplot as plt
-
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, QObject, QThread, QTimer
+from PyQt6.QtCore import pyqtSignal, pyqtSlot, QObject, QThread, QTimer, QMutex
 from PyQt6.QtWidgets import QApplication
 
 
@@ -80,25 +76,16 @@ class USB_Camera(QObject):
         self.save_images = save_images
         self.save_path = save_path
         self.save_png = False
-        self.frame_rate = 15
-        
-        self.stats = {}
-        self.stats_history = {}
 
         self.q_thread : QThread = QThread()
         self.q_thread.setObjectName(f"Cam_{camera_index}")
         self.moveToThread(self.q_thread)
-
 
     @pyqtSlot()
     def init(self):
         threading.current_thread().name = QThread.currentThread().objectName()  #fix names
         debugpy.debug_this_thread()
         self.status_sig.emit(self.camera_index, "Starting")
-
-        self.stats_timer = QTimer()
-        self.stats_timer.setInterval(1000)
-        self.stats_timer.timeout.connect(self.updateStats)
 
         self.cam = cv2.VideoCapture()
         self.cam.setExceptionMode(True)
@@ -110,27 +97,37 @@ class USB_Camera(QObject):
             self.height = int(self.cam.get(cv2.CAP_PROP_FRAME_HEIGHT))
             self.img = np.empty((self.width, self.height), dtype=np.uint8)
 
-            frame_rate = int(self.cam.get(cv2.CAP_PROP_XI_FRAMERATE))
-            if frame_rate > 0:
-                self.frame_rate = frame_rate
-            #self.acq_timer.setInterval(int(1000/self.frame_rate))
-            #self.serial = self.getCameraSerialNumber()
-
-
-            #Insane initialization to get autoLevels
-            # self.imv.setImage(self.img_data, autoHistogramRange=True, autoLevels=True, levelMode='mono')
-            # temperature_image = self.getTemperatureImage()
-            # img = np.reshape(temperature_image.cast('f'), (self.height, self.width))
-            # np.copyto(self.img_data, img.T)
-            # self.imv.getHistogramWidget().imageChanged(autoLevel=True)
-            # self.imv.normRadioChanged()
-                        
             logging.info(f"Started camera {self.camera_index}.")
             self.active = True
             self.ready_sig.emit(self.camera_index, True)
             self.status_sig.emit(self.camera_index, "Running")
-            self.getImage()
-            #self.acq_timer.start()
+
+            if not self.acquiring:
+                self.acquiring = True
+                self.stats = Camera_Stats(self.camera_index, self.img)
+                self.stats.stats_sig.connect(self.stats_sig)
+                while self.active:
+                    ret, img = self.cam.read()
+                    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                    np.copyto(self.img, img.T)
+                    self.update_image_sig.emit(self.camera_index)    
+
+                    #stats - update when processing thread is ready
+                    if self.stats.mutex.tryLock():
+                        self.stats.history["Minimum"] += [np.min(img)]
+                        self.stats.history["Maximum"] += [np.max(img)]
+                        self.stats.history["Mean"] += [np.mean(img)]
+                        self.stats.history["frame_count"] = self.stats.history["frame_count"] + 1
+
+                        self.stats.history["sums"] += self.img
+                        self.stats.history["x_sums"] += [np.sum(img, axis=0)]
+                        self.stats.history["y_sums"] += [np.sum(img, axis=1)]
+                        self.stats.mutex.unlock()
+        
+                    QApplication.processEvents()
+
+                self.stats.stop()
+                self.acquiring = False
 
         except Exception as e:
             logging.error(f"Error starting camera {self.camera_index}: {type(e)} {e}")
@@ -140,8 +137,6 @@ class USB_Camera(QObject):
                 pass
             self.status_sig.emit(self.camera_index, "Error")
             self.ready_sig.emit(self.camera_index, False)
-
-
 
     @pyqtSlot()    
     def stop(self):
@@ -168,41 +163,6 @@ class USB_Camera(QObject):
         self.finished_sig.emit(self.camera_index)
         self.q_thread.quit()
 
-    @pyqtSlot()
-    def getImage(self, save_images=True):
-        if not self.acquiring:
-            self.acquiring = True
-            self.resetStats()
-            self.stats_timer.start()
-
-            while self.active:
-                ret, img = self.cam.read()
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                np.copyto(self.img, img.T)
-                self.update_image_sig.emit(self.camera_index)    
-
-                #stats
-                self.stats_history["Minimum"] += [np.min(img)]
-                self.stats_history["Maximum"] += [np.max(img)]
-                self.stats_history["Mean"] += [np.mean(img)]
-                self.frame_count = self.frame_count + 1
-
-                self.stats_history["sums"] += self.img
-                self.stats_history["x_sums"] = [np.sum(img, axis=0)]
-                self.stats_history["y_sums"] = [np.sum(img, axis=1)]
-       
-                QApplication.processEvents()
-
-                # if self.save_images and save_images:
-                #         makedirs(self.save_path, exist_ok=True)
-                #         fn_base = path.normpath(path.join(self.save_path, f"cam_{self.serial}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"))
-                #         fn_png = fn_base + ".png"
-
-                #         if self.save_png:
-                #             cv2.imwrite(fn_png, img)
-            self.stats_timer.stop()
-            self.acquiring = False
-
     @pyqtSlot(str)
     def setSaveOpts(self, save_path):
         self.save_path = save_path
@@ -210,51 +170,105 @@ class USB_Camera(QObject):
     def getTypeString(self):
         return str(self.camera_index)
 
+
+class Camera_Stats(QObject):
+    stats_sig = pyqtSignal(int, dict)
+    
+    def __init__(self, camera_index: int, img: NDArray):
+        QObject.__init__(self)
+        self.camera_index = camera_index
+        self.frame_rate = 15
+        self.empty_img = np.zeros_like(img, dtype=float)
+        self.mutex = QMutex()
+        self.stats = {"Gaussian":{}}
+        self.history = {}
+
+        self.q_thread : QThread = QThread()
+        self.q_thread.setObjectName(f"Stats_Cam_{camera_index}")
+        self.moveToThread(self.q_thread)
+        self.q_thread.started.connect(self.init)
+        self.q_thread.start()
+
+    @pyqtSlot()
+    def init(self):
+        threading.current_thread().name = QThread.currentThread().objectName()  #fix names
+        debugpy.debug_this_thread()
+        
+        self.resetStats()
+        self.stats_timer = QTimer()
+        self.stats_timer.setInterval(1000)
+        self.stats_timer.timeout.connect(self.updateStats)
+        self.stats_timer.start()
+        logging.info(f"Started stats for camera {self.camera_index}.")
+
     @pyqtSlot()
     def updateStats(self):
-        self.stats["Minimum"] = np.min(self.stats_history["Minimum"])
-        self.stats["Maximum"] = np.max(self.stats_history["Maximum"])
-        self.stats["Mean"] = np.mean(self.stats_history["Mean"])        #NON-GENERALIZABLE STATS WARNING: ONLY ALLOWED BECAUSE ALL SAMPLES ARE IDENTICAL IN SIZE!
-        self.stats['Frame Rate'] = self.frame_count / (self.stats_timer.interval() / 1000)
+        debugpy.debug_this_thread()
+        self.mutex.lock()
+        self.stats["Minimum"] = np.min(self.history["Minimum"])
+        self.stats["Maximum"] = np.max(self.history["Maximum"])
+        self.stats["Mean"] = np.mean(self.history["Mean"])        #NON-GENERALIZABLE STATS WARNING: ONLY ALLOWED BECAUSE ALL SAMPLES ARE IDENTICAL IN SIZE!
+        self.stats['Frame Rate'] = self.history["frame_count"] / (self.stats_timer.interval() / 1000)
+
+        img_means : NDArray = self.history["sums"] / self.history["frame_count"]
+
+        self.resetStats()
+        self.mutex.unlock()
+
         self.stats_sig.emit(self.camera_index, self.stats)
 
-        img_means : NDArray = self.stats_history["sums"] / self.frame_count
+        model = lmfit.models.Gaussian2dModel()
+        x_sub = np.arange(0, img_means.shape[1], 32)
+        y_sub = np.arange(0, img_means.shape[0], 32)
+        z_sub = img_means[::32,::32]
+        x, y = np.meshgrid(x_sub, y_sub)
+        #z = gaussian2d(x, y, amplitude=30, centerx=320, centery=240, sigmax=64, sigmay=64)
 
-        # model = lmfit.models.Gaussian2dModel()
-        # x_sub = np.arange(0, img_means.shape[1], 64)
-        # y_sub = np.arange(0, img_means.shape[0], 64)
-        # z_sub = img_means[::64,::64]
-        # x, y = np.meshgrid(x_sub, y_sub)
-        # #z = gaussian2d(x, y, amplitude=30, centerx=320, centery=240, sigmax=64, sigmay=64)
+        params = model.guess(z_sub.flatten(), x.flatten(), y.flatten())
+        result = model.fit(z_sub, x=x, y=y, calc_covar=False, params=params, max_nfev=5000)
+        
+        x_in_range = (result.params["centerx"].value > (self.empty_img.shape[1] * -0.2)) and \
+                     (result.params["centerx"].value < (self.empty_img.shape[1] * 1.2))
+        
+        y_in_range = (result.params["centery"].value > (self.empty_img.shape[0] * -0.2)) and \
+                     (result.params["centery"].value < (self.empty_img.shape[0] * 1.2))
 
-        # params = model.guess(z_sub.flatten(), x.flatten(), y.flatten())
-        # result = model.fit(z_sub, x=x, y=y, calc_covar=False, params=params, weights=1/np.sqrt(z_sub+1))
+        if result.rsquared > 0.5 and x_in_range and y_in_range:
+            self.stats["Gaussian"]["Center X"] = result.params["centerx"].value
+            self.stats["Gaussian"]["Center Y"] = result.params["centery"].value
+            self.stats["Gaussian"]["FWHM X"] = result.params["fwhmx"].value
+            self.stats["Gaussian"]["FWHM Y"] = result.params["fwhmy"].value
+        else:
+            self.stats["Gaussian"]["Center X"] = ""
+            self.stats["Gaussian"]["Center Y"] = ""
+            self.stats["Gaussian"]["FWHM X"] = ""
+            self.stats["Gaussian"]["FWHM Y"] = ""
 
-        # self.stats["Amplitude"] = result.params["amplitude"].value
-        # self.stats["Center X"] = result.params["centerx"].value
-        # self.stats["Center Y"] = result.params["centery"].value
-        # self.stats["FWHM X"] = result.params["fwhmx"].value
-        # self.stats["FWHM Y"] = result.params["fwhmy"].value
-    
-        self.resetStats()
+        self.stats["Gaussian"]["R^2"] = result.rsquared
+        self.stats["Gaussian"]["Iterations"] = result.nfev
 
-        # x_gauss_params, covar = fit_gaussian(self.stats_history["x_sums"])
+        # x_gauss_params, covar = fit_gaussian(self.history["x_sums"])
         # x_amp, x_center, x_sd = x_gauss_params
-        # y_gauss_params, covar = fit_gaussian(self.stats_history["y_sums"])
+        # y_gauss_params, covar = fit_gaussian(self.history["y_sums"])
         # y_amp, y_center, y_sd = y_gauss_params
 
         # self.stats["X Offset From Origin"]
-        # self.stats["X Skew"] = skew(self.stats_history["x_sums"], axis=0, bias=True)
-        # self.stats["Y Skew"] = skew(self.stats_history["y_sums"], axis=0, bias=True)
+        # self.stats["X Skew"] = skew(self.history["x_sums"], axis=0, bias=True)
+        # self.stats["Y Skew"] = skew(self.history["y_sums"], axis=0, bias=True)
 
     def resetStats(self):
-        self.stats_history["Minimum"] = []
-        self.stats_history["Maximum"] = []
-        self.stats_history["Mean"] = []
-        self.stats_history["sums"] = np.zeros_like(self.img)
-        self.stats_history["x_sums"] = []
-        self.stats_history["y_sums"] = []
-        self.frame_count = 0
+        self.history["Minimum"] = []
+        self.history["Maximum"] = []
+        self.history["Mean"] = []
+        self.history["sums"] = self.empty_img
+        self.history["x_sums"] = []
+        self.history["y_sums"] = []
+        self.history["frame_count"] = 0
+
+    def stop(self):
+        self.stats_timer.stop()
+        logging.info(f"Stopped stats for camera {self.camera_index}.")
+        self.q_thread.quit()
 
 def gaussian(x, amplitude, mean, std_dev):
     """
