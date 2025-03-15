@@ -183,6 +183,11 @@ class Camera_Stats(QObject):
         self.stats = {"Gaussian":{}}
         self.history = {}
 
+        self.fake_center_x = 0
+        self.fake_center_y = 0
+        self.fake_sig_x = -50
+        self.fake_sig_y = -50
+
         self.q_thread : QThread = QThread()
         self.q_thread.setObjectName(f"Stats_Cam_{camera_index}")
         self.moveToThread(self.q_thread)
@@ -222,7 +227,13 @@ class Camera_Stats(QObject):
         y_sub = np.arange(0, img_means.shape[0], 32)
         z_sub = img_means[::32,::32]
         x, y = np.meshgrid(x_sub, y_sub)
-        #z = gaussian2d(x, y, amplitude=30, centerx=320, centery=240, sigmax=64, sigmay=64)
+
+        # For testing only
+        # self.fake_center_x += img_means.shape[0] / 10
+        # self.fake_center_y += img_means.shape[1] / 10
+        # self.fake_sig_x += 10
+        # self.fake_sig_y += 10
+        # z_sub = gaussian2d(x, y, amplitude=30, centerx=self.fake_center_x, centery=self.fake_center_y, sigmax=abs(self.fake_sig_x), sigmay=abs(self.fake_sig_y))
 
         params = model.guess(z_sub.flatten(), x.flatten(), y.flatten())
         result = model.fit(z_sub, x=x, y=y, calc_covar=False, params=params, max_nfev=5000)
@@ -233,16 +244,20 @@ class Camera_Stats(QObject):
         y_in_range = (result.params["centery"].value > (self.empty_img.shape[0] * -0.2)) and \
                      (result.params["centery"].value < (self.empty_img.shape[0] * 1.2))
 
-        if result.rsquared > 0.5 and x_in_range and y_in_range:
+        if result.rsquared > 0.5 and x_in_range and y_in_range and result.nfev < 5000:
             self.stats["Gaussian"]["Center X"] = result.params["centerx"].value
             self.stats["Gaussian"]["Center Y"] = result.params["centery"].value
-            self.stats["Gaussian"]["FWHM X"] = result.params["fwhmx"].value
-            self.stats["Gaussian"]["FWHM Y"] = result.params["fwhmy"].value
+            self.stats["Gaussian"]["Sigma X"] = result.params["sigmax"].value
+            self.stats["Gaussian"]["Sigma Y"] = result.params["sigmay"].value
+            #self.stats["Gaussian"]["FWHM X"] = result.params["fwhmx"].value
+            #self.stats["Gaussian"]["FWHM Y"] = result.params["fwhmy"].value
         else:
             self.stats["Gaussian"]["Center X"] = ""
             self.stats["Gaussian"]["Center Y"] = ""
-            self.stats["Gaussian"]["FWHM X"] = ""
-            self.stats["Gaussian"]["FWHM Y"] = ""
+            #self.stats["Gaussian"]["FWHM X"] = ""
+            #self.stats["Gaussian"]["FWHM Y"] = ""
+            self.stats["Gaussian"]["Sigma X"] = ""
+            self.stats["Gaussian"]["Sigma Y"] = ""
 
         self.stats["Gaussian"]["R^2"] = result.rsquared
         self.stats["Gaussian"]["Iterations"] = result.nfev

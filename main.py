@@ -322,7 +322,8 @@ class Viewer(QMainWindow):
         imv = pg.ImageView()
         imv.setPredefinedGradient('turbo') #'CET-R4')
         imv.setImage(img)
-        return imv
+        crosshair = Crosshair(imv)
+        return imv, crosshair
 
     @pyqtSlot(list)
     def initCams(self, cam_list):
@@ -424,8 +425,9 @@ class Viewer(QMainWindow):
                     #Create dynamically instead in updateStats
                     self.active_cams[cam_idx]["stats"] = {}
 
-                    imv = self.createImageView(active_cam.img)
+                    imv, crosshair = self.createImageView(active_cam.img)
                     self.active_cams[cam_idx]["imv"] = imv
+                    self.active_cams[cam_idx]["crosshair"] = crosshair
 
                     try:
                         self.dock_cam_placeholder.close()
@@ -534,40 +536,10 @@ class Viewer(QMainWindow):
         except IndexError:
             pass
 
-    # @pyqtSlot(QItemSelection, QItemSelection)
-    # def cameraSelChanged(self, selected: QItemSelection, deselected: QItemSelection):
-    #     if selected.isEmpty():
-    #         self.gb_sel_cameras.setEnabled(False)
-    #     else:
-    #         self.gb_sel_cameras.setEnabled(True)
-
     def getSelectedCam(self) -> int:
         if len(self.camera_table.selectionModel().selectedRows()) > 0:
             return self.camera_table.selectionModel().selectedRows()[0].row()
         return -1
-
-    # @pyqtSlot()
-    # def acqStartStop(self):
-    #     if "Start" in self.btn_acq_startstop.text():
-    #         #Start Acquisition
-    #         self.acq_timer.start()
-    #         self.btn_acq_startstop.setText("Stop")
-    #     else:
-    #         #Stop Acqusition
-    #         self.acq_timer.stop()
-    #         self.btn_acq_startstop.setText("Start")
-
-    # @pyqtSlot()
-    # def updateSaveConfig(self):
-    #     self.save_opts.emit(self.ui_datapath.text())
-
-    # def selectDataFolder(self):
-    #     folder_path = QFileDialog.getExistingDirectory(self, "Select Data Directory",
-    #                                                    options=QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontResolveSymlinks)
-    #     if folder_path:
-    #         self.ui_datapath.setText(folder_path)
-    #         logging.info(f"Updated data directory: {folder_path}")
-    #         self.updateSaveConfig()
         
     @pyqtSlot(int, str)
     def updateCamStatus(self, cam_idx : int, status_str : str):
@@ -599,8 +571,18 @@ class Viewer(QMainWindow):
                 else:
                     i.setText(1, f"{x:.2f}")
 
+        crosshair: Crosshair = self.active_cams[cam_idx]["crosshair"]
+        try:
+            target_x = stats["Gaussian"]["Center X"]
+            target_y = stats["Gaussian"]["Center Y"]
+            width_x = stats["Gaussian"]["Sigma X"] * 3
+            width_y = stats["Gaussian"]["Sigma Y"] * 3
+            crosshair.setTarget((target_x, target_y), (width_x, width_y))
+        except (KeyError, TypeError):
+            crosshair.clearTarget()
+
     def updateImage(self, cam_idx : int):
-        imv :pg.ImageView = self.active_cams[cam_idx]["imv"]
+        imv: pg.ImageView = self.active_cams[cam_idx]["imv"]
         #imv.updateImage()
         imv.setImage(imv.image, autoHistogramRange=self.cb_auto_hist.isChecked(), autoLevels=self.cb_auto_levels.isChecked(), autoRange=self.cb_auto_range.isChecked(), levelMode='mono')
 
@@ -708,6 +690,50 @@ class Viewer(QMainWindow):
             pass
         self.ready_to_close = True
         self.close()
+
+
+class Crosshair(pg.GraphicsObject):
+    def __init__(self, image_view: pg.ImageView):
+        super().__init__()
+        self.image_view = image_view
+        self.img_shape = self.image_view.getImageItem().image.shape
+        self.origin = (self.img_shape[0]/2, self.img_shape[1]/2)
+        pen_dashed_white = pg.mkPen(color='w', width=2, style=Qt.PenStyle.DashLine)
+
+        self.vLine = pg.InfiniteLine(angle=90, movable=False, pen=pen_dashed_white)
+        self.hLine = pg.InfiniteLine(angle=0, movable=False, pen=pen_dashed_white)
+        self.image_view.addItem(self.vLine, ignoreBounds=True)
+        self.image_view.addItem(self.hLine, ignoreBounds=True)
+        self.vLine.setPos(self.origin[0])
+        self.hLine.setPos(self.origin[1])
+
+        self.pen_dot_blue = pg.mkPen(color='b', width=2, style=Qt.PenStyle.DotLine)
+        self.pen_dot_green = pg.mkPen(color='g', width=2, style=Qt.PenStyle.DotLine)
+       
+        self.roi = pg.CrosshairROI()
+        self.roi.setPen(self.pen_dot_blue)
+        self.roi.resizable = False
+        self.roi.rotatable = False
+        self.roi.translatable = False
+        self.roi.setVisible(False)
+        self.image_view.addItem(self.roi)
+
+    def setTarget(self, pos, widths):
+        if 0 <= pos[0] < self.img_shape[0] and 0 <= pos[1] < self.img_shape[1]:
+            if (self.origin[0] - 5 < pos[0] < self.origin[0] + 5) and (self.origin[1] - 5 < pos[1] < self.origin[1] + 5):
+                self.roi.setPen(self.pen_dot_green)
+            else:
+                self.roi.setPen(self.pen_dot_blue)
+
+            self.roi.setPos(pos)
+            self.roi.setSize(widths)
+            self.roi.setVisible(True)
+        else:
+            self.roi.setVisible(False)
+
+    def clearTarget(self):
+        self.roi.setVisible(False)
+            
 
 
 if __name__ == '__main__':
