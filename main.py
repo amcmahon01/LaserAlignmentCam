@@ -8,11 +8,178 @@ from PyQt6.QtWidgets import *
 from PyQt6.QtGui import QFont
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal, pyqtSlot, QObject, QSize, QItemSelection
 
+import numpy as np
+from scipy import stats
+
 import pyqtgraph as pg
 from pyqtgraph.dockarea import Dock, DockArea
 
 from camera import USB_Camera, Camera_Search
 from util import *
+
+class Crosshair(pg.GraphicsObject):
+    def __init__(self, image_view: pg.ImageView):
+        super().__init__()
+        self.image_view = image_view
+        self.img_shape = self.image_view.getImageItem().image.shape
+        self.origin = (self.img_shape[0]/2, self.img_shape[1]/2)
+        pen_dashed_white = pg.mkPen(color='w', width=2, style=Qt.PenStyle.DashLine)
+
+        # Global crosshair
+        self.vLine = pg.InfiniteLine(angle=90, movable=False, pen=pen_dashed_white)
+        self.hLine = pg.InfiniteLine(angle=0, movable=False, pen=pen_dashed_white)
+        self.image_view.addItem(self.vLine, ignoreBounds=True)
+        self.image_view.addItem(self.hLine, ignoreBounds=True)
+        self.vLine.setPos(self.origin[0])
+        self.hLine.setPos(self.origin[1])
+
+        self.pen_dot_blue = pg.mkPen(color='b', width=2, style=Qt.PenStyle.DotLine)
+        self.pen_dot_green = pg.mkPen(color='g', width=2, style=Qt.PenStyle.DotLine)
+        self.pen_dash_lightgray = pg.mkPen(color='lightgray', width=1, style=Qt.PenStyle.DashLine)
+        self.pen_solid_blue = pg.mkPen(color='blue', width=1, style=Qt.PenStyle.SolidLine)
+        self.pen_solid_red = pg.mkPen(color='red', width=1, style=Qt.PenStyle.SolidLine)
+        self.pen_solid_green = pg.mkPen(color='green', width=1, style=Qt.PenStyle.SolidLine)
+
+        self.roi = pg.CrosshairROI(movable=True, rotatable=True, resizable=True)
+        self.roi.setPen()
+        for h in self.roi.getHandles():
+            self.roi.removeHandle(h)
+        self.roi.setVisible(False)
+        self.target_center = self.roi.pos()
+        self.target_size = self.roi.size()
+        self.image_view.addItem(self.roi)
+
+        self.vert_plot = pg.PlotWidget(image_view.parentWidget(), labels={'right': 'Y-Axis Crossection Intensity'}, pen='b')
+        self.vert_plot.hideAxis('bottom')
+        self.vert_plot.hideAxis('left')
+        self.vert_plot.showGrid(True, True)
+        self.vert_plot.setFixedWidth(200)
+        self.vert_plot_gauss = self.vert_plot.plot(pen=self.pen_dash_lightgray, name='Gaussian Curve')
+        self.vert_plot_image = self.vert_plot.plot(pen=self.pen_solid_blue, name='Image Data')
+
+        self.hor_plot = pg.PlotWidget(image_view.parentWidget(), labels={'bottom': 'X-Axis Crossection Intensity'}, pen='b')
+        self.hor_plot.hideAxis('left')
+        self.hor_plot.showGrid(True, True)
+        self.hor_plot.setFixedHeight(200)
+        self.hor_plot_gauss = self.hor_plot.plot(pen=self.pen_dash_lightgray, name='Gaussian Curve')
+        self.hor_plot_image = self.hor_plot.plot(pen=self.pen_solid_blue, name='Image Data')
+
+        self.circ_widg = pg.GraphicsLayoutWidget(image_view.parentWidget())
+        self.circ_widg.setFixedSize(200,200)
+        self.circ_plot = self.circ_widg.addPlot()
+
+        self.circ_ellipse = pg.QtWidgets.QGraphicsEllipseItem(-0.5, -0.5, 1, 1)
+        self.circ_ellipse.setPen(self.pen_dash_lightgray)
+        self.circ_plot.addItem(self.circ_ellipse)
+        self.circ_image = pg.QtWidgets.QGraphicsEllipseItem(-0.5, -0.5, 1, 1)
+        self.circ_image.setPen(self.pen_solid_red)
+        self.circ_plot.addItem(self.circ_image)
+        
+        self.circ_plot.setXRange(-0.6, 0.6, padding=0)
+        self.circ_plot.setYRange(-0.6, 0.6, padding=0)
+        self.circ_plot.setAspectLocked(True)
+        self.circ_plot.showGrid(True)
+        self.circ_plot.hideAxis('bottom')
+        self.circ_plot.hideAxis('left')
+
+        self.updatePlots(reset=True)
+
+    def updatePlots(self, reset=False):
+        try:
+            assert reset == False
+            roi_size = self.roi.size()
+            self.target_center = self.roi.pos()
+            
+            y_range_vert = (int(max(self.target_center[1] - 0.5 * roi_size[1], 0)), int(min(self.target_center[1] + 0.5 * roi_size[1], self.img_shape[1])))
+            y_values_vert = np.array(range(*y_range_vert))
+            vert_mu = self.target_center[1]
+            vert_sigma = roi_size[1] / 6
+
+            x_range_hor = (int(max(self.target_center[0] - 0.5 * roi_size[0], 0)), int(min(self.target_center[0] + 0.5 * roi_size[0], self.img_shape[0])))
+            x_values_hor = np.array(range(*x_range_hor))
+            hor_mu = self.target_center[0]
+            hor_sigma = roi_size[0] / 6
+
+            vert_image_curve = self.image_view.image[int(hor_mu), y_range_vert[0]:y_range_vert[1]]
+            vert_gauss = stats.norm(vert_mu, vert_sigma).pdf(y_values_vert)
+            vert_gaussian_curve = vert_image_curve.min() + ((vert_gauss / np.max(vert_gauss)) * vert_image_curve.max())
+            x_range_vert = (vert_image_curve.min(), vert_image_curve.max())
+        
+            hor_image_curve = self.image_view.image[x_range_hor[0]:x_range_hor[1], int(vert_mu)]
+            hor_gauss = stats.norm(hor_mu, hor_sigma).pdf(x_values_hor)
+            hor_gaussian_curve = hor_image_curve.min() + ((hor_gauss / np.max(hor_gauss)) * hor_image_curve.max())
+            y_range_hor = (hor_image_curve.max(), hor_image_curve.min())
+
+            # Show image data plots
+            self.hor_plot_image.setVisible(True)
+            self.vert_plot_image.setVisible(True)
+            self.circ_image.setVisible(True)
+        except (ValueError, AssertionError):
+            x_range_vert = (0, 128)
+            y_range_vert = (-3, 3)
+            x_range_hor = (-3, 3)
+            y_range_hor = (0, 128)
+            vert_mu = 0      # Mean of the distribution
+            vert_sigma = 1   # Standard deviation
+            hor_mu = 0
+            hor_sigma = 1
+
+            y_values_vert = np.linspace(vert_mu - 3 * vert_sigma, vert_mu + 3 * vert_sigma, 100)
+            vert_gaussian_curve = stats.norm(vert_mu, vert_sigma).pdf(y_values_vert) * 255
+            vert_image_curve = np.empty((100))
+        
+            x_values_hor = np.linspace(hor_mu - 3 * hor_sigma, hor_mu + 3 * hor_sigma, 100)
+            hor_gaussian_curve = stats.norm(hor_mu, hor_sigma).pdf(x_values_hor) * 255
+            hor_image_curve = np.empty((100))
+
+            # Hide image data plots
+            self.hor_plot_image.setVisible(False)
+            self.vert_plot_image.setVisible(False)
+            self.circ_image.setVisible(False)
+            
+        #Update plot ranges
+        self.vert_plot.enableAutoRange(axis='x')
+        self.vert_plot.setAutoVisible(x=True)
+        #self.vert_plot.setXRange(x_range_vert[0], x_range_vert[1])
+        self.vert_plot.setYRange(y_range_vert[0], y_range_vert[1])
+
+        self.hor_plot.enableAutoRange(axis='y')
+        self.hor_plot.setAutoVisible(y=True)
+        self.hor_plot.setXRange(x_range_hor[0], x_range_hor[1])
+        #self.hor_plot.setYRange(y_range_hor[0], y_range_hor[1])
+        
+        #Update curves
+        self.hor_plot_gauss.setData(x_values_hor, hor_gaussian_curve)
+        self.hor_plot_image.setData(x_values_hor, hor_image_curve)
+
+        self.vert_plot_gauss.setData(vert_gaussian_curve, y_values_vert)
+        self.vert_plot_image.setData(vert_image_curve, y_values_vert)
+
+        sigma_ratio = vert_sigma / hor_sigma
+        if 0.95 < sigma_ratio < 1.05:
+            self.circ_image.setPen(self.pen_solid_green)
+        else:
+            self.circ_image.setPen(self.pen_solid_red)
+        self.circ_image.setRect(-(1/sigma_ratio)/2, -sigma_ratio/2, 1/sigma_ratio, sigma_ratio)
+
+    def setTarget(self, pos, widths):
+        if 0 <= pos[0] < self.img_shape[0] and 0 <= pos[1] < self.img_shape[1]:
+            if (self.origin[0] - 5 < pos[0] < self.origin[0] + 5) and (self.origin[1] - 5 < pos[1] < self.origin[1] + 5):
+                self.roi.setPen(self.pen_dot_green)
+            else:
+                self.roi.setPen(self.pen_dot_blue)
+
+            self.roi.setSize(widths, center=(0.5, 0.5), update=False)
+            self.roi.setPos(pos)
+            self.roi.setVisible(True)
+            self.updatePlots(reset=False)
+        else:
+            self.clearTarget()
+
+    def clearTarget(self):
+        self.roi.setVisible(False)
+        self.updatePlots(reset=True)
+
 
 
 class Viewer(QMainWindow):
@@ -232,7 +399,7 @@ class Viewer(QMainWindow):
         self.cb_auto_range = QCheckBox(self.gb_acqusition)
         self.cb_auto_range.setObjectName(u"cb_auto_range")
         self.cb_auto_range.setText("Auto Range")
-        self.cb_auto_range.setChecked(True)
+        self.cb_auto_range.setChecked(False)
         self.acq_layout.addWidget(self.cb_auto_range, 0, 0, Qt.AlignmentFlag.AlignLeft)
 
         self.cb_auto_levels = QCheckBox(self.gb_acqusition)
@@ -318,13 +485,6 @@ class Viewer(QMainWindow):
             self.cam_search.q_thread.start()
             self.cam_search.deleteLater()
 
-    def createImageView(self, img):
-        imv = pg.ImageView()
-        imv.setPredefinedGradient('turbo') #'CET-R4')
-        imv.setImage(img)
-        crosshair = Crosshair(imv)
-        return imv, crosshair
-
     @pyqtSlot(list)
     def initCams(self, cam_list):
         self.searching = False
@@ -399,6 +559,22 @@ class Viewer(QMainWindow):
 
             self.active_cams[idx]["start_sig"].emit(0)
 
+    def createImageView(self, img):
+        imv = pg.ImageView()
+        imv.setPredefinedGradient('turbo') #'CET-R4')
+        imv.setImage(img)
+        return imv
+    
+    def createWidget(self, imv: pg.ImageView, crosshair: Crosshair):
+        widget = QWidget()
+        layout = QGridLayout()
+        layout.addWidget(imv, 0, 0)
+        layout.addWidget(crosshair.vert_plot, 0, 1)
+        layout.addWidget(crosshair.hor_plot, 1, 0)
+        layout.addWidget(crosshair.circ_widg, 1, 1)
+
+        widget.setLayout(layout)
+        return widget
 
     @pyqtSlot(int, bool)
     def initCamsUI(self, cam_idx, ready):
@@ -425,9 +601,12 @@ class Viewer(QMainWindow):
                     #Create dynamically instead in updateStats
                     self.active_cams[cam_idx]["stats"] = {}
 
-                    imv, crosshair = self.createImageView(active_cam.img)
+                    imv = self.createImageView(active_cam.img)
+                    crosshair = Crosshair(imv)
+                    widget = self.createWidget(imv, crosshair)
                     self.active_cams[cam_idx]["imv"] = imv
                     self.active_cams[cam_idx]["crosshair"] = crosshair
+                    self.active_cams[cam_idx]["widget"] = widget
 
                     try:
                         self.dock_cam_placeholder.close()
@@ -445,7 +624,7 @@ class Viewer(QMainWindow):
                         self.dock_area.addDock(cam_dock, 'bottom', self.active_cams[active_docks[-2]]['dock'])
                     #Max 4 right now
                     cam_dock.setTitle(cam_str_ser)
-                    cam_dock.addWidget(self.active_cams[cam_idx]["imv"])
+                    cam_dock.addWidget(self.active_cams[cam_idx]["widget"])
                     self.active_cams[cam_idx].update({"dock": cam_dock})
 
                     self.active_cams[cam_idx]["ui_ready"] = True
@@ -575,16 +754,22 @@ class Viewer(QMainWindow):
         try:
             target_x = stats["Gaussian"]["Center X"]
             target_y = stats["Gaussian"]["Center Y"]
-            width_x = stats["Gaussian"]["Sigma X"] * 3
-            width_y = stats["Gaussian"]["Sigma Y"] * 3
+            width_x = stats["Gaussian"]["Sigma X"] * 6
+            width_y = stats["Gaussian"]["Sigma Y"] * 6
             crosshair.setTarget((target_x, target_y), (width_x, width_y))
         except (KeyError, TypeError):
             crosshair.clearTarget()
 
     def updateImage(self, cam_idx : int):
-        imv: pg.ImageView = self.active_cams[cam_idx]["imv"]
-        #imv.updateImage()
-        imv.setImage(imv.image, autoHistogramRange=self.cb_auto_hist.isChecked(), autoLevels=self.cb_auto_levels.isChecked(), autoRange=self.cb_auto_range.isChecked(), levelMode='mono')
+        try:
+            imv: pg.ImageView = self.active_cams[cam_idx]["imv"]
+            #imv.updateImage()
+            imv.setImage(imv.image, autoHistogramRange=self.cb_auto_hist.isChecked(), autoLevels=self.cb_auto_levels.isChecked(), autoRange=self.cb_auto_range.isChecked(), levelMode='mono')
+        except KeyError:
+            pass
+
+    #def updateROIs(self):
+
 
     @pyqtSlot(int)
     def removeCam(self, idx):
@@ -690,50 +875,6 @@ class Viewer(QMainWindow):
             pass
         self.ready_to_close = True
         self.close()
-
-
-class Crosshair(pg.GraphicsObject):
-    def __init__(self, image_view: pg.ImageView):
-        super().__init__()
-        self.image_view = image_view
-        self.img_shape = self.image_view.getImageItem().image.shape
-        self.origin = (self.img_shape[0]/2, self.img_shape[1]/2)
-        pen_dashed_white = pg.mkPen(color='w', width=2, style=Qt.PenStyle.DashLine)
-
-        self.vLine = pg.InfiniteLine(angle=90, movable=False, pen=pen_dashed_white)
-        self.hLine = pg.InfiniteLine(angle=0, movable=False, pen=pen_dashed_white)
-        self.image_view.addItem(self.vLine, ignoreBounds=True)
-        self.image_view.addItem(self.hLine, ignoreBounds=True)
-        self.vLine.setPos(self.origin[0])
-        self.hLine.setPos(self.origin[1])
-
-        self.pen_dot_blue = pg.mkPen(color='b', width=2, style=Qt.PenStyle.DotLine)
-        self.pen_dot_green = pg.mkPen(color='g', width=2, style=Qt.PenStyle.DotLine)
-       
-        self.roi = pg.CrosshairROI()
-        self.roi.setPen(self.pen_dot_blue)
-        self.roi.resizable = False
-        self.roi.rotatable = False
-        self.roi.translatable = False
-        self.roi.setVisible(False)
-        self.image_view.addItem(self.roi)
-
-    def setTarget(self, pos, widths):
-        if 0 <= pos[0] < self.img_shape[0] and 0 <= pos[1] < self.img_shape[1]:
-            if (self.origin[0] - 5 < pos[0] < self.origin[0] + 5) and (self.origin[1] - 5 < pos[1] < self.origin[1] + 5):
-                self.roi.setPen(self.pen_dot_green)
-            else:
-                self.roi.setPen(self.pen_dot_blue)
-
-            self.roi.setPos(pos)
-            self.roi.setSize(widths)
-            self.roi.setVisible(True)
-        else:
-            self.roi.setVisible(False)
-
-    def clearTarget(self):
-        self.roi.setVisible(False)
-            
 
 
 if __name__ == '__main__':
