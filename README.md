@@ -1,4 +1,4 @@
-# Camera Application
+# Laser Alignment Camera Helper
 
 This application captures images from USB cameras and performs statistical analysis to assist with laser alignment. It uses PyQt6 for GUI, pyqtgraph for data visualization, and scipy and lmfit for statistical analysis.
 
