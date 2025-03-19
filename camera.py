@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import QApplication
 
 class Camera_Search(QObject):
     result = pyqtSignal(list)
+    finished = pyqtSignal()
 
     def __init__(self, skip_idxs=[]):
         QObject.__init__(self)
@@ -28,8 +29,11 @@ class Camera_Search(QObject):
         self.q_thread : QThread = QThread()
         self.q_thread.setObjectName(f"Cam_Search")
         self.moveToThread(self.q_thread)
+        self.q_thread.finished.connect(self.q_thread.deleteLater)
+        self.finished.connect(self.deleteLater)
+        self.finished.connect(self.q_thread.quit)
         self.q_thread.started.connect(self.findCameras)
-    
+        
     def findCameras(self):
         #https://stackoverflow.com/a/61768256
         # checks the first 10 indexes.
@@ -54,8 +58,8 @@ class Camera_Search(QObject):
             index += 1
             i -= 1
         self.result.emit(arr)
-        self.q_thread.quit()
-
+        self.finished.emit()
+        
 
 class USB_Camera(QObject):
     ready_sig = pyqtSignal(int, bool)
@@ -87,6 +91,7 @@ class USB_Camera(QObject):
         self.q_thread : QThread = QThread()
         self.q_thread.setObjectName(f"Cam_{camera_index}")
         self.moveToThread(self.q_thread)
+        self.q_thread.finished.connect(self.threadFinished)
 
     @pyqtSlot()
     def init(self):
@@ -145,8 +150,6 @@ class USB_Camera(QObject):
                         self.stats.history["Mean"] += [np.mean(img)]
                         self.stats.history["frame_count"] = self.stats.history["frame_count"] + 1
                         self.stats.history["sums"] += img
-                        # self.stats.history["x_sums"] += [np.sum(img, axis=0)]
-                        # self.stats.history["y_sums"] += [np.sum(img, axis=1)]
                         self.stats.mutex.unlock()
         
                     QApplication.processEvents()
@@ -187,6 +190,9 @@ class USB_Camera(QObject):
         self.status_sig.emit(self.camera_index, "Standby")
         self.finished_sig.emit(self.camera_index)
         self.q_thread.quit()
+    
+    def threadFinished(self):
+        del self.q_thread
 
     @pyqtSlot(str)
     def setSaveOpts(self, save_path):
@@ -218,6 +224,7 @@ class Camera_Stats(QObject):
         self.q_thread.setObjectName(f"Stats_Cam_{camera_index}")
         self.moveToThread(self.q_thread)
         self.q_thread.started.connect(self.init)
+        self.q_thread.finished.connect(self.threadFinished)
         self.q_thread.start()
 
     @pyqtSlot()
@@ -281,60 +288,14 @@ class Camera_Stats(QObject):
             self.stats["Gaussian"]["Center Y"] = result.params["centery"].value
             self.stats["Gaussian"]["Sigma X"] = result.params["sigmax"].value
             self.stats["Gaussian"]["Sigma Y"] = result.params["sigmay"].value
-            #self.stats["Gaussian"]["FWHM X"] = result.params["fwhmx"].value
-            #self.stats["Gaussian"]["FWHM Y"] = result.params["fwhmy"].value
-
-            # #for cross section plots
-            # hor_sigma = result.params["sigmax"].value
-            # hor_center = result.params["centerx"].value
-            # x_range_hor = (hor_center - hor_sigma * 3, hor_center + hor_sigma * 3)
-            # y_range_hor = (self.stats["Minimum"], self.stats["Maximum"])
-
-            # vert_sigma = result.params["sigmay"].value
-            # vert_center = result.params["centery"].value
-            # x_range_vert = (self.stats["Minimum"], self.stats["Maximum"])
-            # y_range_vert = (vert_center - vert_sigma * 3, vert_center + vert_sigma * 3)
-
         else:
             self.stats["Gaussian"]["Center X"] = ""
             self.stats["Gaussian"]["Center Y"] = ""
-            #self.stats["Gaussian"]["FWHM X"] = ""
-            #self.stats["Gaussian"]["FWHM Y"] = ""
             self.stats["Gaussian"]["Sigma X"] = ""
             self.stats["Gaussian"]["Sigma Y"] = ""
             
-            #for cross section plots
-            # x_range_vert = (0, 0.5)
-            # y_range_vert = (-3, 3)
-            # x_range_hor = (-3, 3)
-            # y_range_hor = (0, 0.5)
-            # vert_center = 0      # Mean of the distribution
-            # vert_sigma = 1   # Standard deviation
-            # hor_center = 0
-            # hor_sigma = 1 
-
         self.stats["Gaussian"]["R^2"] = result.rsquared
         self.stats["Gaussian"]["Iterations"] = result.nfev
-
-        # x_gauss_params, covar = fit_gaussian(self.history["x_sums"])
-        # x_amp, x_center, x_sd = x_gauss_params
-        # y_gauss_params, covar = fit_gaussian(self.history["y_sums"])
-        # y_amp, y_center, y_sd = y_gauss_params
-
-        # self.stats["X Offset From Origin"]
-        # self.stats["X Skew"] = skew(self.history["x_sums"], axis=0, bias=True)
-        # self.stats["Y Skew"] = skew(self.history["y_sums"], axis=0, bias=True)
-
-        # vert_values = np.linspace(vert_center - 3 * vert_sigma, vert_center + 3 * vert_sigma, 100)
-        # vert_gaussian_curve = norm(vert_center, vert_sigma).pdf(vert_values)
-
-        # hor_values = np.linspace(hor_center - 3 * hor_sigma, hor_center + 3 * hor_sigma, 100)
-        # hor_gaussian_curve = norm(hor_center, hor_sigma).pdf(hor_values)
-
-        # self.plots["vert_values"] = vert_values
-        # self.plots["vert_gaussian_curve"] = vert_gaussian_curve
-        # self.plots["hor_values"] = hor_values
-        # self.plots["hor_gaussian_curve"] = hor_gaussian_curve
 
         self.stats_sig.emit(self.camera_index, self.stats, self.plots)
 
@@ -352,48 +313,7 @@ class Camera_Stats(QObject):
         self.stats_timer.stop()
         logging.info(f"Stopped stats for camera {self.camera_index}.")
         self.q_thread.quit()
+        self.deleteLater()
 
-def gaussian(x, amplitude, mean, std_dev):
-    """
-    Gaussian function.
-    
-    Parameters:
-    x : array_like
-        Independent variable where the data is measured.
-    amplitude : float
-        Amplitude of the Gaussian function.
-    mean : float
-        Mean (center) of the Gaussian function.
-    std_dev : float
-        Standard deviation (width) of the Gaussian function.
-        
-    Returns:
-    y : array_like
-        Dependent variable values calculated from the Gaussian function.
-    """
-    return amplitude * np.exp(-((x - mean) ** 2 / (2 * std_dev ** 2)))
-
-def fit_gaussian(data):
-    """
-    Fit a Gaussian to a 1D array of data.
-    
-    Parameters:
-    data : array_like
-        The 1D array of data points to fit the Gaussian to.
-        
-    Returns:
-    params : tuple
-        Tuple containing the parameters (amplitude, mean, std_dev) of the fitted Gaussian.
-    covariance : ndarray
-        Covariance matrix of the parameters.
-    """
-    # Create an array of indices for the x values
-    x = np.arange(len(data))
-    
-    # Initial guess for the parameters: [amplitude, mean, std_dev]
-    initial_guess = [np.max(data), len(data) / 2, len(data) / 4]
-    
-    # Fit the Gaussian function to the data
-    params, covariance = curve_fit(gaussian, x, data, p0=initial_guess)
-    
-    return params, covariance
+    def threadFinished(self):
+        del self.q_thread
