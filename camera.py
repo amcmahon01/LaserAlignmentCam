@@ -16,6 +16,7 @@ from scipy.stats import skew, norm
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, QObject, QThread, QTimer, QMutex
 from PyQt6.QtWidgets import QApplication
 
+USE_FAKE_DATA = False
 
 class Camera_Search(QObject):
     result = pyqtSignal(list)
@@ -82,11 +83,12 @@ class USB_Camera(QObject):
         self.save_png = False
 
         #For testing only
-        self.fake_update = 0
-        self.fake_center_x = 0
-        self.fake_center_y = 0
-        self.fake_sig_x = 20
-        self.fake_sig_y = 0
+        if USE_FAKE_DATA:
+            self.fake_update = 0
+            self.fake_center_x = 0
+            self.fake_center_y = 0
+            self.fake_sig_x = 20
+            self.fake_sig_y = 0
 
         self.q_thread : QThread = QThread()
         self.q_thread.setObjectName(f"Cam_{camera_index}")
@@ -123,22 +125,23 @@ class USB_Camera(QObject):
                     img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
                     # For testing only
-                    # img = np.zeros_like(img)
-                    if self.fake_update % 180 == 0:
-                        self.fake_center_x += img.shape[1] / 10
-                        self.fake_center_y += img.shape[0] / 10
-                        self.fake_sig_x += 10
-                        self.fake_sig_y += 15
+                    if USE_FAKE_DATA:
+                        # img = np.zeros_like(img)
+                        if self.fake_update % 180 == 0:
+                            self.fake_center_x += img.shape[1] / 10
+                            self.fake_center_y += img.shape[0] / 10
+                            self.fake_sig_x += 10
+                            self.fake_sig_y += 15
 
-                        x_sub = np.arange(0, img.shape[1])
-                        y_sub = np.arange(0, img.shape[0])
-                        x, y = np.meshgrid(x_sub, y_sub)
+                            x_sub = np.arange(0, img.shape[1])
+                            y_sub = np.arange(0, img.shape[0])
+                            x, y = np.meshgrid(x_sub, y_sub)
 
-                        self.fake_gauss = gaussian2d(x, y, amplitude=1, centerx=self.fake_center_x, centery=self.fake_center_y, sigmax=abs(self.fake_sig_x), sigmay=abs(self.fake_sig_y))
-                        self.fake_gauss = (self.fake_gauss / np.max(self.fake_gauss)) * 255
-                        self.fake_gauss += np.random.normal(0, 25, self.fake_gauss.shape)
-                    img = np.clip(self.fake_gauss + (img * 0.5), 0, 255).astype(np.uint8)
-                    self.fake_update += 1
+                            self.fake_gauss = gaussian2d(x, y, amplitude=1, centerx=self.fake_center_x, centery=self.fake_center_y, sigmax=abs(self.fake_sig_x), sigmay=abs(self.fake_sig_y))
+                            self.fake_gauss = (self.fake_gauss / np.max(self.fake_gauss)) * 255
+                            self.fake_gauss += np.random.normal(0, 25, self.fake_gauss.shape)
+                        img = np.clip(self.fake_gauss + (img * 0.5), 0, 255).astype(np.uint8)
+                        self.fake_update += 1
 
                     np.copyto(self.img, img.T)
                     self.update_image_sig.emit(self.camera_index)    
