@@ -11,7 +11,7 @@ import cv2
 import lmfit
 from lmfit.lineshapes import gaussian2d
 from scipy.stats import skew, norm
-import debugpy
+#import debugpy
 
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, QObject, QThread, QTimer, QMutex
 from PyQt6.QtWidgets import QApplication
@@ -37,7 +37,7 @@ class Camera_Search(QObject):
     def findCameras(self):
         #https://stackoverflow.com/a/61768256
         # checks the first 10 indexes.
-        debugpy.debug_this_thread()
+        # debugpy.debug_this_thread()
         index = 0
         arr = []
         i = 10
@@ -96,7 +96,7 @@ class USB_Camera(QObject):
     @pyqtSlot()
     def init(self):
         threading.current_thread().name = QThread.currentThread().objectName()  #fix names
-        debugpy.debug_this_thread()
+        # debugpy.debug_this_thread()
         self.status_sig.emit(self.camera_index, "Starting")
 
         self.cam = cv2.VideoCapture()
@@ -230,7 +230,7 @@ class Camera_Stats(QObject):
     @pyqtSlot()
     def init(self):
         threading.current_thread().name = QThread.currentThread().objectName()  #fix names
-        debugpy.debug_this_thread()
+        # debugpy.debug_this_thread()
         
         self.resetStats()
         self.stats_timer = QTimer()
@@ -241,7 +241,7 @@ class Camera_Stats(QObject):
 
     @pyqtSlot()
     def updateStats(self):
-        debugpy.debug_this_thread()
+        # debugpy.debug_this_thread()
         self.mutex.lock()
         try:
             self.stats["Minimum"] = np.min(self.history["Minimum"])

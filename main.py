@@ -3,8 +3,6 @@ import logging
 import argparse
 import warnings
 
-import threading
-
 from PyQt6 import QtCore
 from PyQt6.QtWidgets import *
 from PyQt6.QtGui import QFont
