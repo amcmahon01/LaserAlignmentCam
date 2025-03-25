@@ -2,6 +2,7 @@ import sys
 import logging
 import argparse
 import warnings
+from datetime import datetime
 
 from PyQt6 import QtCore
 from PyQt6.QtWidgets import *
@@ -339,6 +340,13 @@ class Viewer(QMainWindow):
         self.cb_auto_hist.setChecked(True)
         self.acq_layout.addWidget(self.cb_auto_hist, 2, 0, Qt.AlignmentFlag.AlignLeft)
 
+        self.btn_screenshot = QPushButton(self.camera_buttons)
+        self.btn_screenshot.setObjectName(u"btn_screenshot")
+        self.btn_screenshot.setText("Save Screenshot") 
+        self.btn_screenshot.setFixedSize(QSize(111,24))
+        self.btn_screenshot.clicked.connect(self.saveScreenshot)
+        self.acq_layout.addWidget(self.btn_screenshot, 3, 0, Qt.AlignmentFlag.AlignCenter)
+
         self.verticalLayout.addWidget(self.gb_acqusition)
 
         return self.config_widget
@@ -356,6 +364,19 @@ class Viewer(QMainWindow):
         self.logging_sig.connect(self.console_widget.append)
 
         return self.console_widget
+    
+    @pyqtSlot()
+    def saveScreenshot(self):
+        current_date_time = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        fname_default = f'Alignment_{current_date_time}.png'
+        filename, _ = QFileDialog.getSaveFileName(None, "Save Screenshot", fname_default, "PNG Files (*.png)")
+        if filename:
+            screen = QApplication.primaryScreen()
+            screenshot = screen.grabWindow(self.winId())
+            if screenshot.save(filename, 'png'):
+                logging.info(f"Screenshot saved as {filename}")
+            else:
+                logging.warning(f"Failed to save screenshot as {filename}")
 
     @pyqtSlot()
     def searchForCams(self):
